@@ -1,0 +1,139 @@
+%% mobile_robot_visualizer_robot_continuous.m
+% 2-D Four-Wheel Robot Visualizer controlled by Python gestures via TCP
+% -------------------------------------------------------------
+% This version supports continuous motion (0–360° angle from Python)
+% If Python sends numeric angles (degrees), robot moves in that exact direction.
+
+clc; clearvars -except tcpServerObj latestCmd;
+close all;
+
+% ---------------- Parameters ----------------
+dt = 0.05;          % time step (s)
+v_max = 3.0;        % max linear speed
+alpha = 0.25;       % smoothing factor
+body_length = 1.5;  % robot body length
+body_width  = 1.0;  % robot body width
+wheel_w     = 0.2;  % wheel width
+wheel_l     = 0.4;  % wheel length
+
+% Initial state
+x = 0; y = 0; theta = 90;
+v = 0; w = 0;
+
+% ---------------- Figure Setup ----------------
+figure('Name','🤖 Continuous 4-Wheel Mobile Robot','NumberTitle','off','Color','w');
+axis equal; axis([-10 10 -10 10]);
+grid on; hold on;
+title('🤖 Continuous Gesture-Controlled 4-Wheel Robot');
+xlabel('X'); ylabel('Y');
+
+% Create robot body (rectangle)
+body_shape = [-body_length/2  body_length/2  body_length/2  -body_length/2;
+              -body_width/2  -body_width/2   body_width/2   body_width/2];
+body_patch = patch('XData',body_shape(1,:), 'YData',body_shape(2,:), ...
+                   'FaceColor',[0.1 0.6 1], 'EdgeColor','k', 'LineWidth',1.5);
+
+% Create 4 wheels (rectangles)
+wheel_rel = [ -body_length/2+0.1, -body_width/2-wheel_w/2;  % rear left
+              -body_length/2+0.1,  body_width/2+wheel_w/2;   % rear right
+               body_length/2-0.1, -body_width/2-wheel_w/2;   % front left
+               body_length/2-0.1,  body_width/2+wheel_w/2 ]; % front right
+for i=1:4
+    wx = [-wheel_l/2 wheel_l/2 wheel_l/2 -wheel_l/2];
+    wy = [-wheel_w/2 -wheel_w/2 wheel_w/2 wheel_w/2];
+    wheel_patch(i) = patch('XData',wx+wheel_rel(i,1),'YData',wy+wheel_rel(i,2), ...
+                           'FaceColor',[0.2 0.2 0.2],'EdgeColor','none');
+end
+
+% Front direction indicator (arrow)
+arrow_line = plot([0 body_length/2],[0 0],'k-','LineWidth',2);
+
+% Trajectory
+trail = plot(x, y, 'r.', 'MarkerSize', 6);
+
+% Text
+infoText = text(-9,9,"",'FontSize',11,'FontWeight','bold','Interpreter','none');
+
+disp("🟢 Continuous robot visualizer running — waiting for numeric angles...");
+
+% ---------------- Helper Function ----------------
+updatePose = @(x,y,theta,shape) deal( ...
+    x + shape(1,:)*cosd(theta) - shape(2,:)*sind(theta), ...
+    y + shape(1,:)*sind(theta) + shape(2,:)*cosd(theta) );
+
+% ---------------- Main Loop ----------------
+while ishandle(body_patch)
+    % Get command from TCP workspace
+    try
+        cmd_raw = evalin('base','latestCmd');
+    catch
+        cmd_raw = '';
+    end
+
+    % Check if numeric or text
+    angle = str2double(cmd_raw);
+    if ~isnan(angle)
+        % ✅ Continuous mode (numeric)
+        v_target = v_max * 0.6;
+        w_target = 0; % no separate angular spin, just directional movement
+        move_x = v_target * cosd(angle);
+        move_y = v_target * sind(angle);
+    else
+        % 🕹️ Fallback discrete mode (for UP/DOWN/LEFT/RIGHT)
+        cmd = upper(string(cmd_raw));
+        switch cmd
+            case 'UP'
+                move_x = 0; move_y = v_max * 0.6;
+            case 'DOWN'
+                move_x = 0; move_y = -v_max * 0.6;
+            case 'LEFT'
+                move_x = -v_max * 0.6; move_y = 0;
+            case 'RIGHT'
+                move_x = v_max * 0.6; move_y = 0;
+            otherwise
+                move_x = 0; move_y = 0;
+        end
+    end
+
+    % Smooth motion
+    v_x = (1-alpha)*(v*cosd(theta)) + alpha*move_x;
+    v_y = (1-alpha)*(v*sind(theta)) + alpha*move_y;
+    v = sqrt(v_x^2 + v_y^2);
+    theta = atan2d(v_y, v_x);
+
+    % Update pose
+    x = x + v * cosd(theta) * dt;
+    y = y + v * sind(theta) * dt;
+
+    % Limit area
+    x = max(min(x, 9.5), -9.5);
+    y = max(min(y, 9.5), -9.5);
+
+    % Update robot graphics
+    [bx, by] = updatePose(x,y,theta,body_shape);
+    set(body_patch,'XData',bx,'YData',by);
+    for i=1:4
+        wx = [-wheel_l/2 wheel_l/2 wheel_l/2 -wheel_l/2] + wheel_rel(i,1);
+        wy = [-wheel_w/2 -wheel_w/2 wheel_w/2 wheel_w/2] + wheel_rel(i,2);
+        [wxr, wyr] = updatePose(x,y,theta,[wx;wy]);
+        set(wheel_patch(i),'XData',wxr,'YData',wyr);
+    end
+    [ax, ay] = updatePose(x,y,theta,[0 body_length/2; 0 0]);
+    set(arrow_line,'XData',ax,'YData',ay);
+
+    % Update trail
+    trail.XData = [trail.XData x];
+    trail.YData = [trail.YData y];
+
+    % Update text
+    if ~isnan(angle)
+        set(infoText,'String',sprintf('Angle: %.1f°  v=%.2f',angle,v));
+    else
+        set(infoText,'String',sprintf('Cmd: %s  v=%.2f',cmd,v));
+    end
+
+    drawnow;
+    pause(dt);
+end
+
+mobile robot code with 360 working
